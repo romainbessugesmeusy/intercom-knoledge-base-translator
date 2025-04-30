@@ -93,7 +93,7 @@ export class SettingsService {
     }
 
     for (const instruction of settings.languageInstructions) {
-      if (!instruction.languageCode || !instruction.writingInstructions) {
+      if (!instruction.languageCode || typeof instruction.writingInstructions !== 'string') {
         throw new Error('Invalid language instruction format');
       }
     }

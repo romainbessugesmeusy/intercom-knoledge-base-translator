@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from 'tailwindcss'
 import autoprefixer from 'autoprefixer'
+import fs from 'fs'
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -15,10 +16,10 @@ export default defineConfig({
     },
   },
   server: {
-    https: {
+    https: fs.existsSync('./certificates/cert.pem') ? {
       key: './certificates/key.pem',
       cert: './certificates/cert.pem'
-    },
+    } : undefined,
     proxy: {
       '/api/intercom': {
         target: 'https://api.intercom.io',

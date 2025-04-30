@@ -117,8 +117,11 @@ export default function GlobalSettingsModal({ isOpen, onClose, languageCodes, on
       setSuccess('Settings imported successfully');
       // Reset the file input
       event.target.value = '';
-      // Reload the page to apply the imported settings
-      window.location.reload();
+      // Reload the config instead of reloading the page
+      const saved = await getGlobalConfig();
+      if (saved) {
+        setConfig(saved);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to import settings');
     }
