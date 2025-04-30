@@ -106,7 +106,7 @@ export class SettingsService {
     }
     try {
       return JSON.parse(storedCredentials) as Credentials;
-    } catch (error) {
+    } catch {
       throw new Error('Failed to parse stored credentials');
     }
   }
@@ -124,7 +124,7 @@ export class SettingsService {
   private static async saveCredentials(credentials: Credentials): Promise<void> {
     try {
       localStorage.setItem('credentials', JSON.stringify(credentials));
-    } catch (error) {
+    } catch {
       throw new Error('Failed to save credentials');
     }
   }
