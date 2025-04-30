@@ -1,13 +1,5 @@
 import type { IntercomArticle, LanguageInstructions, GlobalConfig, TranslationBatch } from '../types';
 
-interface DB {
-  articles: IntercomArticle;
-  prompts: LanguageInstructions;
-  glossaries: Record<string, Record<string, string>>;
-  globalConfig: GlobalConfig;
-  translationBatches: TranslationBatch;
-}
-
 let db: IDBDatabase | null = null;
 let initPromise: Promise<IDBDatabase> | null = null;
 
@@ -32,19 +24,19 @@ export async function initDB(databaseName: string) {
     
     const request = indexedDB.open(databaseName, 2);
 
-    request.onerror = (event) => {
-      console.error('Error opening database:', event);
+    request.onerror = () => {
+      console.error('Error opening database');
       initPromise = null;
       reject(new Error('Failed to open database'));
     };
 
-    request.onsuccess = (event) => {
+    request.onsuccess = () => {
       console.log('Database opened successfully');
       db = request.result;
       resolve(db);
     };
 
-    request.onupgradeneeded = (event) => {
+    request.onupgradeneeded = () => {
       console.log('Upgrading database...');
       const db = request.result;
 

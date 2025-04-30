@@ -45,8 +45,7 @@ export async function translateWithOpenAI(
   title: string,
   body: string,
   systemPrompt: string,
-  targetLanguage: string,
-  onStream?: (chunk: string) => void
+  targetLanguage: string
 ): Promise<{ translatedTitle: string, translatedBody: string }> {
   const globalConfig = await getGlobalConfig();
   const model = globalConfig?.openaiModel || 'gpt-4';
