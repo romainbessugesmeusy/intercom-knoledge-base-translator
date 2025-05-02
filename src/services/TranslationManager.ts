@@ -1,5 +1,5 @@
 // Minimal browser-compatible event emitter
-type Listener = (...args: any[]) => void;
+type Listener = (...args: unknown[]) => void;
 class SimpleEventEmitter {
   private listeners: Record<string, Listener[]> = {};
 
@@ -13,7 +13,7 @@ class SimpleEventEmitter {
     this.listeners[event] = this.listeners[event].filter(l => l !== listener);
   }
 
-  emit(event: string, ...args: any[]) {
+  emit(event: string, ...args: unknown[]) {
     if (!this.listeners[event]) return;
     for (const listener of this.listeners[event]) {
       listener(...args);
@@ -28,7 +28,7 @@ import {
   updateTranslationBatch,
   getLatestTranslationBatch,
 } from './db';
-import { translateWithOpenAI, updateIntercomTranslation } from './api';
+import { updateIntercomTranslation, streamOpenAICompletion } from './api';
 
 // Event types
 export type TranslationManagerEvents =
@@ -188,18 +188,30 @@ export class TranslationManager extends SimpleEventEmitter {
         );
         await this.updateBatch(batchId, { articles: updatedArticles });
 
-        // Translate both title and body
-        const { translatedTitle, translatedBody } = await translateWithOpenAI(
-          t.article.title,
-          t.article.body,
-          batch.systemPrompt,
-          batch.language
+        // Prepare messages for OpenAI
+        const userPrompt = `Translate the following article title and body into ${batch.language}. Respond ONLY with valid HTML. The title should be in an <h1> tag, and the body should be formatted as HTML.\n\nTitle: ${t.article.title}\nBody: ${t.article.body}`;
+        const messages = [
+          { role: 'system', content: batch.systemPrompt },
+          { role: 'user', content: userPrompt },
+        ];
+
+        let streamedContent = '';
+        await streamOpenAICompletion(
+          messages,
+          (chunk) => {
+            streamedContent += chunk;
+            this.emit('translationStream', batchId, t.article.id, streamedContent);
+          },
+          'gpt-4'
         );
 
-        // Update article status to translated, store both title and body
+        // Store the streamed HTML as the translation
+        const translatedBody = streamedContent;
+
+        // Update article status to translated, store the HTML body
         const finalArticles = updatedArticles.map(article =>
           article.article.id === t.article.id
-            ? { ...article, translation: translatedBody, translatedTitle, status: 'translated' as const, completedAt: Date.now() }
+            ? { ...article, translation: translatedBody, status: 'translated' as const, completedAt: Date.now() }
             : article
         );
         await this.updateBatch(batchId, { articles: finalArticles });

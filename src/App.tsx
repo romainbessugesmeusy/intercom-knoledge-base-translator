@@ -32,7 +32,6 @@ function App() {
   const [selectedArticle, setSelectedArticle] = useState<IntercomArticle | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [currentBatch, setCurrentBatch] = useState<TranslationBatch | null>(null)
-  const [modalBatch, setModalBatch] = useState<TranslationBatch | null>(null)
   const [dbName, setDbName] = useState<string>(() => {
     const storedCredentials = localStorage.getItem('credentials')
     return storedCredentials ? JSON.parse(storedCredentials).DATABASE_NAME : ''
@@ -51,13 +50,13 @@ function App() {
           await initDB(dbName)
           if (cancelled) return;
           const batch = await getTranslationBatch(batchId);
-          if (!cancelled) setModalBatch(batch || null);
+          if (!cancelled) setCurrentBatch(batch || null);
         } catch (error) {
           console.error('Failed to load batch:', error);
           if (!cancelled) setError('Failed to load translation batch');
         }
       } else {
-        setModalBatch(null);
+        setCurrentBatch(null);
       }
     }
     loadBatch();
@@ -176,7 +175,6 @@ function App() {
     const unsubBatchCreated = translationManager.subscribe('batchCreated', (...args: unknown[]) => {
       const [, batch] = args as [string, TranslationBatch];
       setCurrentBatch(batch);
-      navigate(`/translations/${batch.id}`);
     });
     const unsubBatchUpdated = translationManager.subscribe('batchUpdated', (...args: unknown[]) => {
       const [, batch] = args as [string, TranslationBatch];
@@ -184,7 +182,6 @@ function App() {
     });
     const unsubTranslationCompleted = translationManager.subscribe('translationCompleted', () => {
       if (currentBatch) {
-        navigate(`/translations/${currentBatch.id}`);
       }
     });
     return () => {
@@ -192,15 +189,15 @@ function App() {
       unsubBatchUpdated();
       unsubTranslationCompleted();
     };
-  }, [currentBatch, navigate, isInitialized])
+  }, [currentBatch, isInitialized])
 
   const handleLaunchTranslation = async (additionalContext: string) => {
-    if (!modalBatch) return;
+    if (!currentBatch) return;
     try {
       // Update the batch with the latest additionalContext
-      await translationManager.updateBatch(modalBatch.id, { additionalContext });
-      setModalBatch({ ...modalBatch, additionalContext });
-      await translationManager.launchTranslation(modalBatch.id);
+      await translationManager.updateBatch(currentBatch.id, { additionalContext });
+      setCurrentBatch({ ...currentBatch, additionalContext });
+      await translationManager.launchTranslation(currentBatch.id);
     } catch (error) {
       console.error('Failed to launch translation:', error);
       setError('Failed to launch translation');
@@ -209,9 +206,9 @@ function App() {
 
   // Approve/reject handlers
   const handleApprove = async (articleId: string) => {
-    if (!modalBatch) return;
+    if (!currentBatch) return;
     try {
-      await translationManager.approveTranslation(modalBatch.id, articleId);
+      await translationManager.approveTranslation(currentBatch.id, articleId);
     } catch (error) {
       console.error('Failed to approve translation:', error);
       setError('Failed to approve translation');
@@ -219,9 +216,9 @@ function App() {
   };
 
   const handleReject = async (articleId: string) => {
-    if (!modalBatch) return;
+    if (!currentBatch) return;
     try {
-      await translationManager.rejectTranslation(modalBatch.id, articleId);
+      await translationManager.rejectTranslation(currentBatch.id, articleId);
     } catch (error) {
       console.error('Failed to reject translation:', error);
       setError('Failed to reject translation');
@@ -341,8 +338,7 @@ function App() {
                       '',
                       ''
                     );
-                    setModalBatch(batch);
-                    navigate(`/translations/${batch.id}`);
+                    setCurrentBatch(batch);
                   } catch (error) {
                     console.error('Failed to create translation batch:', error);
                     setError('Failed to create translation batch');
@@ -409,8 +405,7 @@ function App() {
                       '',
                       ''
                     ).then(batch => {
-                      setModalBatch(batch);
-                      navigate(`/translations/${batch.id}`);
+                      setCurrentBatch(batch);
                     });
                   } catch (error) {
                     console.error('Failed to create translation batch:', error);
@@ -418,22 +413,6 @@ function App() {
                   }
                 }}
                 onRefresh={() => refreshArticle(selectedArticle.id)}
-              />
-            )
-          }
-        />
-        <Route
-          path="/translations/:batchId"
-          element={
-            modalBatch && (
-              <TranslatePopup
-                isOpen={true}
-                batch={modalBatch}
-                onClose={() => navigate('/')}
-                onLaunchTranslation={handleLaunchTranslation}
-                onApprove={handleApprove}
-                onReject={handleReject}
-                mode="review"
               />
             )
           }
@@ -446,7 +425,8 @@ function App() {
           batch={currentBatch}
           onClose={() => setCurrentBatch(null)}
           onLaunchTranslation={handleLaunchTranslation}
-          mode="setup"
+          onApprove={handleApprove}
+          onReject={handleReject}
         />
       )}
     </div>
