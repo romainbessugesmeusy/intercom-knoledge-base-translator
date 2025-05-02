@@ -21,7 +21,7 @@ class SimpleEventEmitter {
   }
 }
 
-import type { TranslationBatch, IntercomArticle, TranslatedContent } from '../types';
+import type { TranslationBatch, IntercomArticle } from '../types';
 import {
   getTranslationBatch,
   saveTranslationBatch,
@@ -115,33 +115,45 @@ export class TranslationManager extends SimpleEventEmitter {
     try {
       // Ensure translated_content is updated for the batch language
       const languageCode = batch.language;
-      const defaultContent: TranslatedContent = {
-        title: article.title,
-        description: article.description,
-        body: article.body,
-        state: article.state as 'draft' | 'published',
-      };
-      
-      const translatedContent: TranslatedContent = {
-        title: article.title,
-        description: article.description,
-        body: article.body,
-        state: 'draft' as const,
-      };
-
-      const newTranslatedContent: Record<string, TranslatedContent> = {
-        [article.default_locale]: defaultContent,
-        [languageCode]: translatedContent
-      };
-
-      const updatedArticle = {
-        ...article,
-        translated_content: newTranslatedContent
+      let updatedArticle = article;
+      if(languageCode === article.default_locale) {
+        // Override the default translated content
+        updatedArticle = {
+          ...article,
+          title: t.translatedTitle || article.title,
+          body: t.translation || article.body,
+          translated_content: {
+            ...article.translated_content,
+            [languageCode]: {
+              title: t.translatedTitle || article.title,
+              description: article.description,
+              body: t.translation || article.body,
+              state: article.state,
+            }
+          }
+        }
+      } else {
+        // Don't override the default translated content
+        const defaultTranslatedContent = article.translated_content?.[article.default_locale];
+        updatedArticle = {
+          ...article,
+          title: defaultTranslatedContent?.title || article.title,
+          body: defaultTranslatedContent?.body || article.body,
+          translated_content: {
+            ...article.translated_content,
+            [languageCode]: {
+              title: t.translatedTitle || article.title,
+              description: article.description,
+              body: t.translation || article.body,
+              state: 'draft' as const,
+            }
+          }
+        }
       };
       await updateIntercomTranslation(updatedArticle);
       updatedArticles = updatedArticles.map(t =>
         t.article.id === article.id
-          ? { ...t, status: 'synced' as const, finalTranslation: article.body, error: undefined }
+          ? { ...t, status: 'synced' as const, finalTranslation: t.translation || article.body, error: undefined }
           : t
       );
     } catch (err) {
@@ -158,46 +170,14 @@ export class TranslationManager extends SimpleEventEmitter {
     const batch = await this.getBatch(batchId);
     if (!batch) throw new Error('Batch not found');
 
-    // Set to syncing
-    let updatedArticles = batch.articles.map(t =>
+    // Update the article status to rejected in the batch
+    const updatedArticles = batch.articles.map(t =>
       t.article.id === article.id
-        ? { ...t, status: 'syncing' as const }
+        ? { ...t, status: 'sync_failed' as const, error: 'Translation rejected' }
         : t
     );
-    await this.updateBatch(batchId, { articles: updatedArticles });
 
-    // Call Intercom API
-    const t = updatedArticles.find(t => t.article.id === article.id);
-    if (!t) throw new Error('Article not found in batch');
-
-    try {
-      // Ensure translated_content is updated for the batch language
-      const languageCode = batch.language;
-      const updatedArticle = {
-        ...article,
-        translated_content: {
-          ...article.translated_content,
-          [languageCode]: {
-            title: article.title,
-            description: article.description,
-            body: article.body,
-            state: 'draft' as const,
-          }
-        }
-      };
-      await updateIntercomTranslation(updatedArticle);
-      updatedArticles = updatedArticles.map(t =>
-        t.article.id === article.id
-          ? { ...t, status: 'synced' as const, error: undefined }
-          : t
-      );
-    } catch (err) {
-      updatedArticles = updatedArticles.map(t =>
-        t.article.id === article.id
-          ? { ...t, status: 'sync_failed' as const, error: String(err) }
-          : t
-      );
-    }
+    // Update the batch with the rejected status
     await this.updateBatch(batchId, { articles: updatedArticles });
   }
 
@@ -233,21 +213,19 @@ export class TranslationManager extends SimpleEventEmitter {
 
     console.log('batch', batch);
 
-
     // Process articles in parallel with a concurrency limit
-    const processArticle = async (article: typeof batch.articles[0]) => {
+    const processArticle = async (article: typeof batch.articles[0], currentBatch: TranslationBatch) => {
       try {
-        // Get fresh batch state before updating
-        const currentBatch = await getTranslationBatch(batchId);
-        if (!currentBatch) throw new Error('Batch not found');
+        // Update article status to in_progress in the current batch
+        const articleIndex = currentBatch.articles.findIndex(a => a.article.id === article.article.id);
+        if (articleIndex === -1) throw new Error('Article not found in batch');
 
-        // Update article status to in_progress
-        const updatedArticles = currentBatch.articles.map(a => 
-          a.article.id === article.article.id 
-            ? { ...a, status: 'in_progress' as const, startedAt: Date.now() }
-            : a
-        );
-        await this.updateBatch(batchId, { articles: updatedArticles });
+        currentBatch.articles[articleIndex] = {
+          ...currentBatch.articles[articleIndex],
+          status: 'in_progress' as const,
+          startedAt: Date.now()
+        };
+        await this.updateBatch(batchId, { articles: currentBatch.articles });
 
         // Prepare messages for OpenAI
         const userPrompt = `Translate the following article title and body into ${batch.language}. Respond ONLY with valid HTML. The title should be in an <h1> tag, and the body should be formatted as HTML. Don't include backticks in the response.\n\nTitle: ${article.article.title}\nBody: ${article.article.body}`;
@@ -261,40 +239,35 @@ export class TranslationManager extends SimpleEventEmitter {
           messages,
           (chunk) => {
             streamedContent += chunk;
-            // Emit the stream event with the full content so far for this article
-            this.emit('translationStream', batchId, article.article.id, streamedContent);
+            this.emit('translationStream', batchId, String(article.article.id), streamedContent);
           },
           globalConfig?.openaiModel || 'gpt-4'
         );
 
-        // Store the streamed HTML as the translation
+        // Store the complete streamed HTML as the translation
         const translatedBody = streamedContent;
 
-        // Get fresh batch state again before final update
-        const finalBatch = await getTranslationBatch(batchId);
-        if (!finalBatch) throw new Error('Batch not found');
-
-        // Update article status to translated, store the HTML body
-        const finalArticles = finalBatch.articles.map(a =>
-          a.article.id === article.article.id
-            ? { ...a, translation: translatedBody, status: 'translated' as const, completedAt: Date.now() }
-            : a
-        );
-        await this.updateBatch(batchId, { articles: finalArticles });
+        // Update article with translation and status
+        currentBatch.articles[articleIndex] = {
+          ...currentBatch.articles[articleIndex],
+          translation: translatedBody,
+          status: 'translated' as const,
+          completedAt: Date.now()
+        };
+        await this.updateBatch(batchId, { articles: currentBatch.articles });
         this.emit('translationProgress', batchId, article.article.id, translatedBody);
 
       } catch (err) {
-        // Get fresh batch state before error update
-        const errorBatch = await getTranslationBatch(batchId);
-        if (!errorBatch) throw new Error('Batch not found');
-
-        // Update article status to failed
-        const failedArticles = errorBatch.articles.map(a =>
-          a.article.id === article.article.id
-            ? { ...a, status: 'failed' as const, error: String(err) }
-            : a
-        );
-        await this.updateBatch(batchId, { articles: failedArticles });
+        // Update article status to failed in the current batch
+        const articleIndex = currentBatch.articles.findIndex(a => a.article.id === article.article.id);
+        if (articleIndex !== -1) {
+          currentBatch.articles[articleIndex] = {
+            ...currentBatch.articles[articleIndex],
+            status: 'failed' as const,
+            error: String(err)
+          };
+          await this.updateBatch(batchId, { articles: currentBatch.articles });
+        }
         this.emit('error', batchId, err);
       }
     };
@@ -305,8 +278,13 @@ export class TranslationManager extends SimpleEventEmitter {
       chunks.push(batch.articles.slice(i, i + maxConcurrent));
     }
 
+    // Process each chunk sequentially, but articles within chunk in parallel
     for (const chunk of chunks) {
-      await Promise.all(chunk.map(processArticle));
+      // Get fresh batch state before processing chunk
+      const currentBatch = await this.getBatch(batchId);
+      if (!currentBatch) throw new Error('Batch not found');
+      
+      await Promise.all(chunk.map(article => processArticle(article, currentBatch)));
     }
 
     // Update batch status to completed

@@ -32,57 +32,12 @@ export default function TranslatePopup({
   const containerRef = React.useRef<HTMLDivElement>(null);
   const editorRef = React.useRef<HTMLDivElement | null>(null);
 
-  const selectedArticle = localBatch?.articles.find(t => t.article.id === selectedArticleId);
-
-  // Create the editor div once
-  React.useEffect(() => {
-    if (!containerRef.current || editorRef.current) return;
-
-    const editor = document.createElement('div');
-    editor.className = 'prose max-w-none focus:outline-none focus:ring-2 focus:ring-blue-500';
-    editor.contentEditable = 'true';
-    
-    containerRef.current.appendChild(editor);
-    editorRef.current = editor;
-
-    // Set initial content
-    if (selectedArticleId && selectedArticle) {
-      const content = selectedArticle.status === 'in_progress'
-        ? localStreamedContent[selectedArticleId] || selectedArticle.translation || ''
-        : selectedArticle.translation || '';
-      editor.innerHTML = content;
-    }
-
-    return () => {
-      editor.remove();
-      editorRef.current = null;
-    };
-  }, [selectedArticleId, selectedArticle, localStreamedContent]);
-
-  // Update content when article changes
-  React.useEffect(() => {
-    if (!editorRef.current || !selectedArticleId) return;
-
-    const content = selectedArticle?.status === 'in_progress'
-      ? localStreamedContent[selectedArticleId] || selectedArticle?.translation || ''
-      : selectedArticle?.translation || '';
-
-    editorRef.current.innerHTML = content;
-  }, [selectedArticleId, selectedArticle?.status, localStreamedContent, selectedArticle?.translation]);
-
-  React.useEffect(() => {
-    if (batch) {
-      setLocalBatch(batch);
-      setLocalStreamedContent({});
-    }
-  }, [batch]);
-
   React.useEffect(() => {
     if (!batch) return;
     // Subscribe to TranslationManager events for this batch
     const unsubBatchUpdated = translationManager.subscribe('batchUpdated', (...args: unknown[]) => {
-      const [updatedBatchId, updatedBatch] = args as [string, TranslationBatch];
-      if (updatedBatchId === batch.id) setLocalBatch(updatedBatch);
+      const [batchId, updatedBatch] = args as [string, TranslationBatch];
+      if (batchId === batch.id) setLocalBatch(updatedBatch);
     });
     const unsubTranslationStream = translationManager.subscribe('translationStream', (...args: unknown[]) => {
       const [batchId, articleId, content] = args as [string, string, string];
@@ -99,22 +54,75 @@ export default function TranslatePopup({
     };
   }, [batch]);
 
+  React.useEffect(() => {
+    if (batch) {
+      setLocalBatch(batch);
+      setLocalStreamedContent({});
+    }
+  }, [batch]);
+
+  // Create the editor div once
+  React.useEffect(() => {
+    if (!containerRef.current || editorRef.current) return;
+
+    const editor = document.createElement('div');
+    editor.className = 'prose max-w-none focus:outline-none focus:ring-2 focus:ring-blue-500';
+    editor.contentEditable = 'true';
+    
+    containerRef.current.appendChild(editor);
+    editorRef.current = editor;
+
+    // Set initial content
+    if (selectedArticleId && localBatch) {
+      const article = localBatch.articles.find(t => t.article.id === selectedArticleId);
+      if (article) {
+        const content = article.status === 'in_progress'
+          ? localStreamedContent[article.article.id] || article.translation || ''
+          : article.translation || '';
+        editor.innerHTML = content;
+      }
+    }
+
+    return () => {
+      editor.remove();
+      editorRef.current = null;
+    };
+  }, [selectedArticleId, localBatch, localStreamedContent]);
+
+  // Update content when article changes
+  React.useEffect(() => {
+    if (!editorRef.current || !selectedArticleId || !localBatch) return;
+
+    const article = localBatch.articles.find(t => t.article.id === selectedArticleId);
+    if (!article) return;
+
+    const content = article.status === 'in_progress'
+      ? localStreamedContent[article.article.id] || article.translation || ''
+      : article.translation || '';
+
+    editorRef.current.innerHTML = content;
+  }, [selectedArticleId, localBatch, localStreamedContent]);
+
   const handleTranslate = () => {
     onLaunchTranslation(additionalContext);
   };
 
   const handleSubmit = async () => {
-    if (!selectedArticle || !onApprove || !onReject || !editorRef.current || !batch) return;
+    if (!selectedArticleId || !localBatch || !onApprove || !onReject || !editorRef.current) return;
+    
+    const article = localBatch.articles.find(t => t.article.id === selectedArticleId);
+    if (!article) return;
+
     setLoading(true);
     setResult(null);
     try {
       const html = editorRef.current.innerHTML;
       // Extract <h1>...</h1> as title, rest as body
       const match = html.match(/<h1[^>]*>(.*?)<\/h1>/i);
-      const editedTitle = match ? match[1].trim() : selectedArticle.translatedTitle || selectedArticle.article.title;
+      const editedTitle = match ? match[1].trim() : article.translatedTitle || article.article.title;
       const editedBody = html.replace(/<h1[^>]*>.*?<\/h1>/i, '').trim();
       const updatedArticle = {
-        ...selectedArticle.article,
+        ...article.article,
         title: editedTitle,
         body: editedBody,
       };
@@ -133,6 +141,8 @@ export default function TranslatePopup({
   };
 
   if (!localBatch) return null;
+
+  const selectedArticle = localBatch.articles.find(t => t.article.id === selectedArticleId);
 
   return (
     <Dialog open={isOpen} onClose={onClose} className="relative z-[70]">
@@ -186,12 +196,12 @@ export default function TranslatePopup({
                           <h5 className="font-medium">{t.article.title}</h5>
                           <p className="text-sm text-gray-500 mt-1">{t.article.description}</p>
                         </div>
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium whitespace-nowrap ${
                           t.status === 'completed' ? 'bg-green-100 text-green-800' :
                           t.status === 'failed' ? 'bg-red-100 text-red-800' :
                           t.status === 'in_progress' ? 'bg-blue-100 text-blue-800' :
                           t.status === 'translated' ? 'bg-yellow-100 text-yellow-800' :
-                          'bg-yellow-100 text-yellow-800'
+                          'bg-gray-100 text-gray-800'
                         }`}>
                           {t.status === 'in_progress' ? 'In Progress' : t.status}
                         </span>
@@ -203,11 +213,11 @@ export default function TranslatePopup({
             </div>
 
             {/* Column 2: Translated Content */}
-            <div className="border rounded-lg overflow-hidden flex flex-col">
+            <div className="border rounded-lg overflow-hidden flex flex-col" key={selectedArticleId}>
               <div className="p-4 bg-gray-50 border-b">
                 <h4 className="font-medium">Translated Content</h4>
               </div>
-              <div className="flex-1 min-h-0 p-4">
+              <div className="flex-1 min-h-0 p-4 overflow-y-auto">
                 {selectedArticle ? (
                   <>
                     {selectedArticle.translatedTitle && (
@@ -215,8 +225,11 @@ export default function TranslatePopup({
                     )}
                     {selectedArticle.status === 'in_progress' ? (
                       <div 
-                        className="prose max-w-none"
-                        dangerouslySetInnerHTML={{ __html: localStreamedContent[selectedArticle.article.id] || selectedArticle.translation || '' }}
+                        className="prose max-w-none overflow-y-auto"
+                        style={{ maxHeight: 'calc(100vh - 400px)' }}
+                        dangerouslySetInnerHTML={{ 
+                          __html: localStreamedContent[selectedArticle.article.id] || selectedArticle.translation || ''
+                        }}
                       />
                     ) : (
                       <div ref={containerRef} className="w-full h-full overflow-y-auto" style={{maxHeight: '60vh'}} />
