@@ -1,6 +1,7 @@
 import { Dialog } from '@headlessui/react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import type { IntercomArticle } from '../types';
+import { getLanguageName } from '../data/languages';
 
 interface Props {
   isOpen: boolean;
@@ -133,7 +134,7 @@ export default function ArticleViewerModal({
                           : 'bg-blue-100 text-blue-800 hover:bg-blue-200'
                       }`}
                     >
-                      {article.default_locale} (original)
+                      {getLanguageName(article.default_locale)} (original)
                     </button>
                     {Object.entries(article.translated_content).filter(([lang]) => lang !== "type").map(([lang, content]) => (
                       <button
@@ -145,7 +146,7 @@ export default function ArticleViewerModal({
                             : 'bg-blue-100 text-blue-800 hover:bg-blue-200'
                         }`}
                       >
-                        {lang} ({content.state})
+                        {getLanguageName(lang)} ({content.state})
                       </button>
                     ))}
                   </div>

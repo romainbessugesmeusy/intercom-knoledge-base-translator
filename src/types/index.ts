@@ -6,7 +6,7 @@ export interface IntercomArticle {
   description: string;
   body: string;
   author_id: string;
-  state: 'published' | 'draft';
+  state: 'draft' | 'published';
   created_at: number;
   updated_at: number;
   url: string;
@@ -24,7 +24,7 @@ export interface TranslatedContent {
   title: string;
   description: string;
   body: string;
-  state: 'published' | 'draft';
+  state: 'draft' | 'published';
 }
 
 export interface Credentials {
@@ -44,6 +44,7 @@ export interface LanguageInstructions {
 export interface GlobalConfig {
   instructions: string;
   openaiModel: string;
+  maxConcurrentTranslations: number;
 }
 
 export interface TranslationState {

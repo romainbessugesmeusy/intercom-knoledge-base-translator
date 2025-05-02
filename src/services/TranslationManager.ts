@@ -21,12 +21,14 @@ class SimpleEventEmitter {
   }
 }
 
-import type { TranslationBatch, IntercomArticle } from '../types';
+import type { TranslationBatch, IntercomArticle, TranslatedContent } from '../types';
 import {
   getTranslationBatch,
   saveTranslationBatch,
   updateTranslationBatch,
   getLatestTranslationBatch,
+  getGlobalConfig,
+  getLanguageInstructions,
 } from './db';
 import { updateIntercomTranslation, streamOpenAICompletion } from './api';
 
@@ -57,13 +59,32 @@ export class TranslationManager extends SimpleEventEmitter {
     systemPrompt: string,
     additionalContext: string
   ): Promise<TranslationBatch> {
+    // Get global config for instructions
+    const globalConfig = await getGlobalConfig();
+    const globalInstructions = globalConfig?.instructions || '';
+
+    // Get language-specific instructions
+    const languageInstructions = await getLanguageInstructions(language);
+    const writingInstructions = languageInstructions?.writingInstructions || '';
+    const glossary = languageInstructions?.glossary || {};
+
+    // Combine all instructions into the system prompt
+    const fullSystemPrompt = [
+      globalInstructions,
+      writingInstructions,
+      Object.entries(glossary).length > 0 ? 'Glossary:' : '',
+      ...Object.entries(glossary).map(([term, translation]) => `- ${term}: ${translation}`),
+      systemPrompt,
+      additionalContext
+    ].filter(Boolean).join('\n\n');
+
     const batch: TranslationBatch = {
       id: crypto.randomUUID(),
       createdAt: Date.now(),
       updatedAt: Date.now(),
       language,
       status: 'in_progress',
-      systemPrompt,
+      systemPrompt: fullSystemPrompt,
       additionalContext,
       articles: articles.map(article => ({
         article,
@@ -75,37 +96,57 @@ export class TranslationManager extends SimpleEventEmitter {
     return batch;
   }
 
-  async approveTranslation(batchId: string, articleId: string) {
+  async approveTranslation(batchId: string, article: IntercomArticle) {
     const batch = await this.getBatch(batchId);
     if (!batch) throw new Error('Batch not found');
 
     // Set to syncing
     let updatedArticles = batch.articles.map(t =>
-      t.article.id === articleId
+      t.article.id === article.id
         ? { ...t, status: 'syncing' as const }
         : t
     );
     await this.updateBatch(batchId, { articles: updatedArticles });
 
     // Call Intercom API
-    const t = updatedArticles.find(t => t.article.id === articleId);
+    const t = updatedArticles.find(t => t.article.id === article.id);
     if (!t) throw new Error('Article not found in batch');
 
     try {
-      await updateIntercomTranslation(articleId, batch.language, {
-        title: t.translatedTitle || t.article.title,
-        description: t.article.description,
-        body: t.translation,
-        state: 'published',
-      });
+      // Ensure translated_content is updated for the batch language
+      const languageCode = batch.language;
+      const defaultContent: TranslatedContent = {
+        title: article.title,
+        description: article.description,
+        body: article.body,
+        state: article.state as 'draft' | 'published',
+      };
+      
+      const translatedContent: TranslatedContent = {
+        title: article.title,
+        description: article.description,
+        body: article.body,
+        state: 'draft' as const,
+      };
+
+      const newTranslatedContent: Record<string, TranslatedContent> = {
+        [article.default_locale]: defaultContent,
+        [languageCode]: translatedContent
+      };
+
+      const updatedArticle = {
+        ...article,
+        translated_content: newTranslatedContent
+      };
+      await updateIntercomTranslation(updatedArticle);
       updatedArticles = updatedArticles.map(t =>
-        t.article.id === articleId
-          ? { ...t, status: 'synced' as const, finalTranslation: t.translation, error: undefined }
+        t.article.id === article.id
+          ? { ...t, status: 'synced' as const, finalTranslation: article.body, error: undefined }
           : t
       );
     } catch (err) {
       updatedArticles = updatedArticles.map(t =>
-        t.article.id === articleId
+        t.article.id === article.id
           ? { ...t, status: 'sync_failed' as const, error: String(err) }
           : t
       );
@@ -113,37 +154,46 @@ export class TranslationManager extends SimpleEventEmitter {
     await this.updateBatch(batchId, { articles: updatedArticles });
   }
 
-  async rejectTranslation(batchId: string, articleId: string) {
+  async rejectTranslation(batchId: string, article: IntercomArticle) {
     const batch = await this.getBatch(batchId);
     if (!batch) throw new Error('Batch not found');
 
     // Set to syncing
     let updatedArticles = batch.articles.map(t =>
-      t.article.id === articleId
+      t.article.id === article.id
         ? { ...t, status: 'syncing' as const }
         : t
     );
     await this.updateBatch(batchId, { articles: updatedArticles });
 
     // Call Intercom API
-    const t = updatedArticles.find(t => t.article.id === articleId);
+    const t = updatedArticles.find(t => t.article.id === article.id);
     if (!t) throw new Error('Article not found in batch');
 
     try {
-      await updateIntercomTranslation(articleId, batch.language, {
-        title: t.article.title,
-        description: t.article.description,
-        body: t.translation,
-        state: 'draft',
-      });
+      // Ensure translated_content is updated for the batch language
+      const languageCode = batch.language;
+      const updatedArticle = {
+        ...article,
+        translated_content: {
+          ...article.translated_content,
+          [languageCode]: {
+            title: article.title,
+            description: article.description,
+            body: article.body,
+            state: 'draft' as const,
+          }
+        }
+      };
+      await updateIntercomTranslation(updatedArticle);
       updatedArticles = updatedArticles.map(t =>
-        t.article.id === articleId
+        t.article.id === article.id
           ? { ...t, status: 'synced' as const, error: undefined }
           : t
       );
     } catch (err) {
       updatedArticles = updatedArticles.map(t =>
-        t.article.id === articleId
+        t.article.id === article.id
           ? { ...t, status: 'sync_failed' as const, error: String(err) }
           : t
       );
@@ -174,22 +224,33 @@ export class TranslationManager extends SimpleEventEmitter {
       return;
     }
 
+    // Get global config for max concurrent translations
+    const globalConfig = await getGlobalConfig();
+    const maxConcurrent = globalConfig?.maxConcurrentTranslations || 3;
+
     // Update batch status to in_progress
     await this.updateBatch(batchId, { status: 'in_progress' });
 
-    for (let i = 0; i < batch.articles.length; i++) {
-      const t = batch.articles[i];
+    console.log('batch', batch);
+
+
+    // Process articles in parallel with a concurrency limit
+    const processArticle = async (article: typeof batch.articles[0]) => {
       try {
+        // Get fresh batch state before updating
+        const currentBatch = await getTranslationBatch(batchId);
+        if (!currentBatch) throw new Error('Batch not found');
+
         // Update article status to in_progress
-        const updatedArticles = batch.articles.map(article => 
-          article.article.id === t.article.id 
-            ? { ...article, status: 'in_progress' as const }
-            : article
+        const updatedArticles = currentBatch.articles.map(a => 
+          a.article.id === article.article.id 
+            ? { ...a, status: 'in_progress' as const, startedAt: Date.now() }
+            : a
         );
         await this.updateBatch(batchId, { articles: updatedArticles });
 
         // Prepare messages for OpenAI
-        const userPrompt = `Translate the following article title and body into ${batch.language}. Respond ONLY with valid HTML. The title should be in an <h1> tag, and the body should be formatted as HTML.\n\nTitle: ${t.article.title}\nBody: ${t.article.body}`;
+        const userPrompt = `Translate the following article title and body into ${batch.language}. Respond ONLY with valid HTML. The title should be in an <h1> tag, and the body should be formatted as HTML. Don't include backticks in the response.\n\nTitle: ${article.article.title}\nBody: ${article.article.body}`;
         const messages = [
           { role: 'system', content: batch.systemPrompt },
           { role: 'user', content: userPrompt },
@@ -200,33 +261,52 @@ export class TranslationManager extends SimpleEventEmitter {
           messages,
           (chunk) => {
             streamedContent += chunk;
-            this.emit('translationStream', batchId, t.article.id, streamedContent);
+            // Emit the stream event with the full content so far for this article
+            this.emit('translationStream', batchId, article.article.id, streamedContent);
           },
-          'gpt-4'
+          globalConfig?.openaiModel || 'gpt-4'
         );
 
         // Store the streamed HTML as the translation
         const translatedBody = streamedContent;
 
+        // Get fresh batch state again before final update
+        const finalBatch = await getTranslationBatch(batchId);
+        if (!finalBatch) throw new Error('Batch not found');
+
         // Update article status to translated, store the HTML body
-        const finalArticles = updatedArticles.map(article =>
-          article.article.id === t.article.id
-            ? { ...article, translation: translatedBody, status: 'translated' as const, completedAt: Date.now() }
-            : article
+        const finalArticles = finalBatch.articles.map(a =>
+          a.article.id === article.article.id
+            ? { ...a, translation: translatedBody, status: 'translated' as const, completedAt: Date.now() }
+            : a
         );
         await this.updateBatch(batchId, { articles: finalArticles });
-        this.emit('translationProgress', batchId, t.article.id, translatedBody);
+        this.emit('translationProgress', batchId, article.article.id, translatedBody);
 
       } catch (err) {
+        // Get fresh batch state before error update
+        const errorBatch = await getTranslationBatch(batchId);
+        if (!errorBatch) throw new Error('Batch not found');
+
         // Update article status to failed
-        const failedArticles = batch.articles.map(article =>
-          article.article.id === t.article.id
-            ? { ...article, status: 'failed' as const, error: String(err) }
-            : article
+        const failedArticles = errorBatch.articles.map(a =>
+          a.article.id === article.article.id
+            ? { ...a, status: 'failed' as const, error: String(err) }
+            : a
         );
         await this.updateBatch(batchId, { articles: failedArticles });
         this.emit('error', batchId, err);
       }
+    };
+
+    // Process articles in parallel with concurrency limit
+    const chunks = [];
+    for (let i = 0; i < batch.articles.length; i += maxConcurrent) {
+      chunks.push(batch.articles.slice(i, i + maxConcurrent));
+    }
+
+    for (const chunk of chunks) {
+      await Promise.all(chunk.map(processArticle));
     }
 
     // Update batch status to completed

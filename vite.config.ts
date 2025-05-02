@@ -6,7 +6,14 @@ import fs from 'fs'
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    {
+      name: 'env-checker',
+      configureServer() {
+        console.log('Environment variables:', process.env);
+      },
+    },
+    react()],
   css: {
     postcss: {
       plugins: [
@@ -21,10 +28,17 @@ export default defineConfig({
       cert: './certificates/cert.pem'
     } : undefined,
     proxy: {
-      '/api': {
-        target: 'http://localhost:3000',
+      '/api/intercom': {
+        target: 'https://api.eu.intercom.io',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '')
+        rewrite: (path) => path.replace(/^\/api\/intercom/, ''),
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq, req) => {
+            if (req.headers.authorization) {
+              proxyReq.setHeader('Authorization', req.headers.authorization);
+            }
+          });
+        }
       }
     }
   },

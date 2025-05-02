@@ -1,5 +1,5 @@
 import { Dialog } from '@headlessui/react';
-import type { TranslationBatch } from '../types';
+import type { TranslationBatch, IntercomArticle } from '../types';
 import React from 'react';
 import { translationManager } from '../services/TranslationManager';
 
@@ -8,8 +8,8 @@ interface Props {
   onClose: () => void;
   batch: TranslationBatch;
   onLaunchTranslation: (additionalContext: string) => void;
-  onApprove?: (articleId: string) => void;
-  onReject?: (articleId: string) => void;
+  onApprove?: (article: IntercomArticle, batchId: string) => void;
+  onReject?: (article: IntercomArticle, batchId: string) => void;
 }
 
 export default function TranslatePopup({
@@ -29,7 +29,6 @@ export default function TranslatePopup({
   const [loading, setLoading] = React.useState(false);
   const [result, setResult] = React.useState<string | null>(null);
   const [additionalContext, setAdditionalContext] = React.useState(batch ? batch.additionalContext || '' : '');
-  const [editedContent, setEditedContent] = React.useState<Record<string, string>>({});
   const containerRef = React.useRef<HTMLDivElement>(null);
   const editorRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -50,7 +49,7 @@ export default function TranslatePopup({
     if (selectedArticleId && selectedArticle) {
       const content = selectedArticle.status === 'in_progress'
         ? localStreamedContent[selectedArticleId] || selectedArticle.translation || ''
-        : editedContent[selectedArticleId] || selectedArticle.translation || '';
+        : selectedArticle.translation || '';
       editor.innerHTML = content;
     }
 
@@ -58,7 +57,7 @@ export default function TranslatePopup({
       editor.remove();
       editorRef.current = null;
     };
-  }, [selectedArticleId, selectedArticle, localStreamedContent, editedContent]);
+  }, [selectedArticleId, selectedArticle, localStreamedContent]);
 
   // Update content when article changes
   React.useEffect(() => {
@@ -66,10 +65,10 @@ export default function TranslatePopup({
 
     const content = selectedArticle?.status === 'in_progress'
       ? localStreamedContent[selectedArticleId] || selectedArticle?.translation || ''
-      : editedContent[selectedArticleId] || selectedArticle?.translation || '';
+      : selectedArticle?.translation || '';
 
     editorRef.current.innerHTML = content;
-  }, [selectedArticleId, selectedArticle?.status, localStreamedContent, editedContent, selectedArticle?.translation]);
+  }, [selectedArticleId, selectedArticle?.status, localStreamedContent, selectedArticle?.translation]);
 
   React.useEffect(() => {
     if (batch) {
@@ -88,7 +87,10 @@ export default function TranslatePopup({
     const unsubTranslationStream = translationManager.subscribe('translationStream', (...args: unknown[]) => {
       const [batchId, articleId, content] = args as [string, string, string];
       if (batchId === batch.id) {
-        setLocalStreamedContent((prev: Record<string, string>) => ({ ...prev, [articleId]: content }));
+        setLocalStreamedContent(prev => ({
+          ...prev,
+          [articleId]: content
+        }));
       }
     });
     return () => {
@@ -102,22 +104,25 @@ export default function TranslatePopup({
   };
 
   const handleSubmit = async () => {
-    if (!selectedArticle || !onApprove || !onReject || !editorRef.current) return;
+    if (!selectedArticle || !onApprove || !onReject || !editorRef.current || !batch) return;
     setLoading(true);
     setResult(null);
     try {
-      // Get the current content from the editor
-      const content = editorRef.current.innerHTML;
-      setEditedContent(prev => ({
-        ...prev,
-        [selectedArticle.article.id]: content
-      }));
-
+      const html = editorRef.current.innerHTML;
+      // Extract <h1>...</h1> as title, rest as body
+      const match = html.match(/<h1[^>]*>(.*?)<\/h1>/i);
+      const editedTitle = match ? match[1].trim() : selectedArticle.translatedTitle || selectedArticle.article.title;
+      const editedBody = html.replace(/<h1[^>]*>.*?<\/h1>/i, '').trim();
+      const updatedArticle = {
+        ...selectedArticle.article,
+        title: editedTitle,
+        body: editedBody,
+      };
       if (decision === 'approve') {
-        await onApprove(selectedArticle.article.id);
+        await onApprove(updatedArticle, batch.id);
         setResult('Approved and updated in Intercom!');
       } else if (decision === 'reject') {
-        await onReject(selectedArticle.article.id);
+        await onReject(updatedArticle, batch.id);
         setResult('Rejected and update sent to Intercom.');
       }
     } catch {
@@ -219,7 +224,10 @@ export default function TranslatePopup({
                     {/* Sync status UI */}
                     {selectedArticle.status === 'syncing' && (
                       <div className="mt-4 flex items-center space-x-2">
-                        <svg className="animate-spin h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path></svg>
+                        <svg className="animate-spin h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+                        </svg>
                         <span className="text-blue-700 font-medium">Syncing with Intercom...</span>
                       </div>
                     )}
@@ -235,8 +243,8 @@ export default function TranslatePopup({
                           type="button"
                           className="ml-2 px-3 py-1 rounded bg-red-600 text-white text-xs font-semibold hover:bg-red-700"
                           onClick={() => {
-                            if (decision === 'approve' && onApprove) onApprove(selectedArticle.article.id);
-                            else if (decision === 'reject' && onReject) onReject(selectedArticle.article.id);
+                            if (decision === 'approve' && onApprove && batch) onApprove(selectedArticle.article, batch.id);
+                            else if (decision === 'reject' && onReject && batch) onReject(selectedArticle.article, batch.id);
                           }}
                         >
                           Retry
@@ -284,13 +292,19 @@ export default function TranslatePopup({
                         )}
                         <button
                           type="submit"
-                          className={`px-4 py-2 rounded-md font-semibold text-white ${decision === 'approve' ? 'bg-green-600 hover:bg-green-700' : decision === 'reject' ? 'bg-red-600 hover:bg-red-700' : 'bg-gray-400 cursor-not-allowed'}`}
+                          className={`px-4 py-2 rounded-md font-semibold text-white ${
+                            decision === 'approve' ? 'bg-green-600 hover:bg-green-700' :
+                            decision === 'reject' ? 'bg-red-600 hover:bg-red-700' :
+                            'bg-gray-400 cursor-not-allowed'
+                          }`}
                           disabled={!decision || loading}
                         >
                           {loading ? 'Submitting...' : 'Submit'}
                         </button>
                         {result && (
-                          <div className={`mt-2 text-sm font-medium ${result.startsWith('Failed') ? 'text-red-600' : 'text-green-600'}`}>{result}</div>
+                          <div className={`mt-2 text-sm font-medium ${result.startsWith('Failed') ? 'text-red-600' : 'text-green-600'}`}>
+                            {result}
+                          </div>
                         )}
                       </form>
                     )}

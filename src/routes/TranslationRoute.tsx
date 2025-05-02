@@ -2,12 +2,12 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import TranslatePopup from '../components/TranslatePopup';
 import { initDB, getTranslationBatch } from '../services/db';
-import type { TranslationBatch } from '../types';
+import type { TranslationBatch, IntercomArticle } from '../types';
 
 interface TranslationRouteProps {
-  handleLaunchTranslation: (additionalContext: string) => Promise<void>;
-  handleApprove: (articleId: string, batchId: string) => Promise<void>;
-  handleReject: (articleId: string, batchId: string) => Promise<void>;
+  handleLaunchTranslation: (batchId: string, additionalContext: string) => Promise<void>;
+  handleApprove: (article: IntercomArticle, batchId: string) => Promise<void>;
+  handleReject: (article: IntercomArticle, batchId: string) => Promise<void>;
   dbName: string;
   isInitialized: boolean;
 }
@@ -72,9 +72,9 @@ export function TranslationRoute({
       onClose={() => {
         navigate('/');
       }}
-      onLaunchTranslation={handleLaunchTranslation}
-      onApprove={(articleId) => handleApprove(articleId, batch.id)}
-      onReject={(articleId) => handleReject(articleId, batch.id)}
+      onLaunchTranslation={(additionalContext) => handleLaunchTranslation(batch.id, additionalContext)}
+      onApprove={(article) => handleApprove(article, batch.id)}
+      onReject={(article) => handleReject(article, batch.id)}
     />
   );
 } 

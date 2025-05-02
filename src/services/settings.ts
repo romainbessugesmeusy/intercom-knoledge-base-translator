@@ -1,5 +1,6 @@
 import { Credentials, GlobalConfig, LanguageInstructions } from '../types';
 import { initDB, getGlobalConfig, saveGlobalConfig, saveLanguageInstructions } from './db';
+import { configureAPIs } from './api';
 
 interface SettingsExport {
   credentials: Credentials;
@@ -55,14 +56,23 @@ export class SettingsService {
       // Validate the imported data
       this.validateSettings(settings);
 
-      // Save all settings to IndexedDB
+      // Save credentials first and initialize the database
       await this.saveCredentials(settings.credentials);
+      await initDB(settings.credentials.DATABASE_NAME);
+      
+      // Configure APIs with the new credentials
+      configureAPIs(settings.credentials);
+
+      // Save all settings to IndexedDB
       await saveGlobalConfig(settings.globalConfig);
       
       // Save each language instruction
       for (const instruction of settings.languageInstructions) {
         await saveLanguageInstructions(instruction);
       }
+
+      // Reload the page to reinitialize the app with new settings
+      window.location.reload();
     } catch (error) {
       console.error('Error importing settings:', error);
       throw error;

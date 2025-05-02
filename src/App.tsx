@@ -10,6 +10,7 @@ import type { IntercomArticle, Credentials } from './types'
 import { translationManager } from './services/TranslationManager'
 import { ArticleRoute } from './routes/ArticleRoute'
 import { TranslationRoute } from './routes/TranslationRoute'
+import { languages } from './data/languages'
 
 function App() {
   const navigate = useNavigate()
@@ -23,10 +24,6 @@ function App() {
   const [selectedLanguage] = useState(() => {
     const savedLanguage = localStorage.getItem('selectedLanguage')
     return savedLanguage || 'fr-FR'
-  })
-  const [languageCodes, setLanguageCodes] = useState<string[]>(() => {
-    const savedCodes = localStorage.getItem('languageCodes')
-    return savedCodes ? JSON.parse(savedCodes) : ['fr-FR', 'en-US', 'es-ES', 'de-DE', 'it-IT', 'pt-BR']
   })
   const [error, setError] = useState<string | null>(null)
   const [dbName, setDbName] = useState<string>(() => {
@@ -85,11 +82,6 @@ function App() {
     }
   }, [])
 
-  // Save language codes to localStorage when they change
-  useEffect(() => {
-    localStorage.setItem('languageCodes', JSON.stringify(languageCodes))
-  }, [languageCodes])
-
   // Handle successful API credentials validation
   const handleCredentialsSuccess = () => {
     const storedCredentials = localStorage.getItem('credentials')
@@ -135,10 +127,9 @@ function App() {
     }
   }
 
-  const handleLaunchTranslation = async (additionalContext: string) => {
+  const handleLaunchTranslation = async (batchId: string, additionalContext: string) => {
     try {
-      const batchId = await translationManager.launchTranslation(additionalContext);
-      navigate(`/translation/${batchId}`);
+      await translationManager.launchTranslation(batchId);
     } catch (error) {
       console.error('Failed to launch translation:', error);
       setError('Failed to launch translation');
@@ -146,18 +137,18 @@ function App() {
   };
 
   // Approve/reject handlers
-  const handleApprove = async (articleId: string, batchId: string) => {
+  const handleApprove = async (article: IntercomArticle, batchId: string) => {
     try {
-      await translationManager.approveTranslation(batchId, articleId);
+      await translationManager.approveTranslation(batchId, article);
     } catch (error) {
       console.error('Failed to approve translation:', error);
       setError('Failed to approve translation');
     }
   };
 
-  const handleReject = async (articleId: string, batchId: string) => {
+  const handleReject = async (article: IntercomArticle, batchId: string) => {
     try {
-      await translationManager.rejectTranslation(batchId, articleId);
+      await translationManager.rejectTranslation(batchId, article);
     } catch (error) {
       console.error('Failed to reject translation:', error);
       setError('Failed to reject translation');
@@ -179,9 +170,9 @@ function App() {
                 }}
                 className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
-                {languageCodes.map((code) => (
-                  <option key={code} value={code}>
-                    {code}
+                {languages.map((lang) => (
+                  <option key={lang.code} value={lang.code}>
+                    {lang.name}
                   </option>
                 ))}
               </select>
@@ -214,6 +205,37 @@ function App() {
             {error}
           </div>
         )}
+
+        <Routes>
+          <Route
+            path="/api-credentials"
+            element={
+              <APICredentialsModal
+                isOpen={true}
+                onSuccess={handleCredentialsSuccess}
+              />
+            }
+          />
+          <Route
+            path="/language-instructions"
+            element={
+              <LanguageInstructionsModal
+                isOpen={true}
+                languageCode={selectedLanguage}
+                onClose={() => navigate('/')}
+              />
+            }
+          />
+          <Route
+            path="/global-settings"
+            element={
+              <GlobalSettingsModal
+                isOpen={true}
+                onClose={() => navigate('/')}
+              />
+            }
+          />
+        </Routes>
 
         {!isInitialized ? (
           <div className="text-center py-12">
@@ -289,36 +311,6 @@ function App() {
             </div>
 
             <Routes>
-              <Route
-                path="/api-credentials"
-                element={
-                  <APICredentialsModal
-                    isOpen={true}
-                    onSuccess={handleCredentialsSuccess}
-                  />
-                }
-              />
-              <Route
-                path="/language-instructions"
-                element={
-                  <LanguageInstructionsModal
-                    isOpen={true}
-                    languageCode={selectedLanguage}
-                    onClose={() => navigate('/')}
-                  />
-                }
-              />
-              <Route
-                path="/global-settings"
-                element={
-                  <GlobalSettingsModal
-                    isOpen={true}
-                    languageCodes={languageCodes}
-                    onLanguageCodesChange={setLanguageCodes}
-                    onClose={() => navigate('/')}
-                  />
-                }
-              />
               <Route
                 path="/article/:articleId"
                 element={

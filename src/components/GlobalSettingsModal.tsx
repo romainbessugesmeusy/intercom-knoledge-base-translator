@@ -8,8 +8,6 @@ import { SettingsService } from '../services/settings';
 interface Props {
   isOpen: boolean;
   onClose: () => void;
-  languageCodes: string[];
-  onLanguageCodesChange: (codes: string[]) => void;
 }
 
 interface OpenAIModel {
@@ -18,12 +16,12 @@ interface OpenAIModel {
   owned_by: string;
 }
 
-export default function GlobalSettingsModal({ isOpen, onClose, languageCodes, onLanguageCodesChange }: Props) {
+export default function GlobalSettingsModal({ isOpen, onClose }: Props) {
   const [config, setConfig] = useState<GlobalConfig>({
     instructions: '',
     openaiModel: 'gpt-4',
+    maxConcurrentTranslations: 3,
   });
-  const [newCode, setNewCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -57,31 +55,6 @@ export default function GlobalSettingsModal({ isOpen, onClose, languageCodes, on
       loadModels();
     }
   }, [isOpen]);
-
-  const handleAddCode = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newCode) return;
-
-    // Validation for both two-letter language codes and language-region format
-    const codeRegex = /^[a-z]{2}(-[A-Z]{2})?$/;
-    if (!codeRegex.test(newCode)) {
-      setError('Language code must be in format: xx or xx-XX (e.g., fr or fr-FR)');
-      return;
-    }
-
-    if (languageCodes.includes(newCode)) {
-      setError('This language code already exists');
-      return;
-    }
-
-    onLanguageCodesChange([...languageCodes, newCode]);
-    setNewCode('');
-    setError(null);
-  };
-
-  const handleRemoveCode = (codeToRemove: string) => {
-    onLanguageCodesChange(languageCodes.filter(code => code !== codeToRemove));
-  };
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -220,59 +193,25 @@ export default function GlobalSettingsModal({ isOpen, onClose, languageCodes, on
                 />
               </div>
 
-              {/* Language Codes Management */}
+              {/* Max Concurrent Translations */}
               <div>
                 <label className="block text-sm font-medium text-gray-700">
-                  Manage Languages
+                  Max Concurrent Translations
                 </label>
-                <form onSubmit={handleAddCode} className="mt-2 flex gap-2">
-                  <input
-                    type="text"
-                    className="input flex-1"
-                    placeholder="Add language code (e.g., fr or fr-FR)"
-                    value={newCode}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      // Convert only the language part to lowercase, preserve the region part
-                      const parts = value.split('-');
-                      const newValue = parts.length > 1 
-                        ? `${parts[0].toLowerCase()}-${parts[1].toUpperCase()}`
-                        : value.toLowerCase();
-                      setNewCode(newValue);
-                      setError(null);
-                    }}
-                  />
-                  <button
-                    type="submit"
-                    className="btn btn-primary"
-                    disabled={!newCode}
-                  >
-                    Add
-                  </button>
-                </form>
-
-                {error && (
-                  <p className="mt-2 text-sm text-red-600">{error}</p>
-                )}
-
-                <div className="mt-4">
-                  <h4 className="text-sm font-medium text-gray-700 mb-2">Current Language Codes</h4>
-                  <div className="max-h-48 overflow-y-auto">
-                    <ul className="divide-y divide-gray-200">
-                      {languageCodes.map((code) => (
-                        <li key={code} className="py-2 flex justify-between items-center">
-                          <code className="font-mono">{code}</code>
-                          <button
-                            onClick={() => handleRemoveCode(code)}
-                            className="text-red-600 hover:text-red-900 text-sm"
-                          >
-                            Remove
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  value={config.maxConcurrentTranslations}
+                  onChange={(e) => setConfig(prev => ({
+                    ...prev,
+                    maxConcurrentTranslations: Math.min(10, Math.max(1, parseInt(e.target.value) || 1)),
+                  }))}
+                />
+                <p className="mt-1 text-sm text-gray-500">
+                  Maximum number of translations to process simultaneously (1-10)
+                </p>
               </div>
             </div>
 

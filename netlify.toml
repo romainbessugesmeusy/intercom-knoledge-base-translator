@@ -4,9 +4,10 @@
 
 [[redirects]]
   from = "/api/intercom/*"
-  to = "https://api.intercom.io/:splat"
+  to = "https://api.eu.intercom.io/:splat"
   status = 200
   force = true
+  methods = ["OPTIONS", "GET", "POST", "PUT", "PATCH", "DELETE"]
   [redirects.headers]
     Access-Control-Allow-Origin = "*"
     Access-Control-Allow-Methods = "GET, POST, PUT, DELETE, OPTIONS"
@@ -24,7 +25,7 @@
   to = "/favicon.ico"
   status = 200
 
-[[redirects]]
+[[redirects]] 
   from = "/vite.svg"
   to = "/vite.svg"
   status = 200
