@@ -1,19 +1,18 @@
 import { useState, useEffect } from 'react'
-import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
+import { Routes, Route, useNavigate } from 'react-router-dom'
 import APICredentialsModal from './components/APICredentialsModal'
 import LanguageInstructionsModal from './components/LanguageInstructionsModal'
 import GlobalSettingsModal from './components/GlobalSettingsModal'
 import ArticleList from './components/ArticleList'
-import ArticleViewerModal from './components/ArticleViewerModal'
-import TranslatePopup from './components/TranslatePopup'
 import { fetchIntercomArticles, configureAPIs } from './services/api'
-import { initDB, saveArticle, getAllArticles, getTranslationBatch } from './services/db'
-import type { IntercomArticle, Credentials, TranslationBatch } from './types'
+import { initDB, saveArticle, getAllArticles } from './services/db'
+import type { IntercomArticle, Credentials } from './types'
 import { translationManager } from './services/TranslationManager'
+import { ArticleRoute } from './routes/ArticleRoute'
+import { TranslationRoute } from './routes/TranslationRoute'
 
 function App() {
   const navigate = useNavigate()
-  const location = useLocation()
   
   // State
   const [isInitialized, setIsInitialized] = useState(false)
@@ -29,53 +28,11 @@ function App() {
     const savedCodes = localStorage.getItem('languageCodes')
     return savedCodes ? JSON.parse(savedCodes) : ['fr-FR', 'en-US', 'es-ES', 'de-DE', 'it-IT', 'pt-BR']
   })
-  const [selectedArticle, setSelectedArticle] = useState<IntercomArticle | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [currentBatch, setCurrentBatch] = useState<TranslationBatch | null>(null)
   const [dbName, setDbName] = useState<string>(() => {
     const storedCredentials = localStorage.getItem('credentials')
     return storedCredentials ? JSON.parse(storedCredentials).DATABASE_NAME : ''
   })
-
-  // Detect if the current route is a modal route
-  const isModal = location.pathname.startsWith('/translations/')
-
-  // Load the batch for the modal if needed
-  useEffect(() => {
-    let cancelled = false;
-    async function loadBatch() {
-      if (isModal && dbName) {  // Only proceed if we have a dbName
-        const batchId = location.pathname.split('/translations/')[1]
-        try {
-          await initDB(dbName)
-          if (cancelled) return;
-          const batch = await getTranslationBatch(batchId);
-          if (!cancelled) setCurrentBatch(batch || null);
-        } catch (error) {
-          console.error('Failed to load batch:', error);
-          if (!cancelled) setError('Failed to load translation batch');
-        }
-      } else {
-        setCurrentBatch(null);
-      }
-    }
-    loadBatch();
-    return () => { cancelled = true; };
-  }, [isModal, location.pathname, dbName])
-
-  // Save language codes to localStorage when they change
-  useEffect(() => {
-    localStorage.setItem('languageCodes', JSON.stringify(languageCodes))
-  }, [languageCodes])
-
-  // Check for existing credentials and initialize
-  useEffect(() => {
-    const storedCredentials = localStorage.getItem('credentials')
-    if (storedCredentials) {
-      const credentials: Credentials = JSON.parse(storedCredentials)
-      initializeApp(credentials)
-    }
-  }, [])
 
   // Initialize app with credentials
   const initializeApp = async (credentials: Credentials) => {
@@ -119,6 +76,20 @@ function App() {
     }
   }
 
+  // Check for existing credentials and initialize
+  useEffect(() => {
+    const storedCredentials = localStorage.getItem('credentials')
+    if (storedCredentials) {
+      const credentials: Credentials = JSON.parse(storedCredentials)
+      initializeApp(credentials)
+    }
+  }, [])
+
+  // Save language codes to localStorage when they change
+  useEffect(() => {
+    localStorage.setItem('languageCodes', JSON.stringify(languageCodes))
+  }, [languageCodes])
+
   // Handle successful API credentials validation
   const handleCredentialsSuccess = () => {
     const storedCredentials = localStorage.getItem('credentials')
@@ -138,10 +109,6 @@ function App() {
         await saveArticle(article[0])
         const updatedArticles = await getAllArticles() as IntercomArticle[]
         setArticles(updatedArticles)
-        // Update the selected article if it's the one being refreshed
-        if (selectedArticle && selectedArticle.id === articleId) {
-          setSelectedArticle(article[0])
-        }
       }
     } catch (err) {
       console.error(`Failed to refresh article ${articleId}:`, err)
@@ -168,36 +135,10 @@ function App() {
     }
   }
 
-  // Subscribe to TranslationManager events only when initialized
-  useEffect(() => {
-    if (!isInitialized) return;
-
-    const unsubBatchCreated = translationManager.subscribe('batchCreated', (...args: unknown[]) => {
-      const [, batch] = args as [string, TranslationBatch];
-      setCurrentBatch(batch);
-    });
-    const unsubBatchUpdated = translationManager.subscribe('batchUpdated', (...args: unknown[]) => {
-      const [, batch] = args as [string, TranslationBatch];
-      if (batch && currentBatch && batch.id === currentBatch.id) setCurrentBatch(batch);
-    });
-    const unsubTranslationCompleted = translationManager.subscribe('translationCompleted', () => {
-      if (currentBatch) {
-      }
-    });
-    return () => {
-      unsubBatchCreated();
-      unsubBatchUpdated();
-      unsubTranslationCompleted();
-    };
-  }, [currentBatch, isInitialized])
-
   const handleLaunchTranslation = async (additionalContext: string) => {
-    if (!currentBatch) return;
     try {
-      // Update the batch with the latest additionalContext
-      await translationManager.updateBatch(currentBatch.id, { additionalContext });
-      setCurrentBatch({ ...currentBatch, additionalContext });
-      await translationManager.launchTranslation(currentBatch.id);
+      const batchId = await translationManager.launchTranslation(additionalContext);
+      navigate(`/translation/${batchId}`);
     } catch (error) {
       console.error('Failed to launch translation:', error);
       setError('Failed to launch translation');
@@ -205,20 +146,18 @@ function App() {
   };
 
   // Approve/reject handlers
-  const handleApprove = async (articleId: string) => {
-    if (!currentBatch) return;
+  const handleApprove = async (articleId: string, batchId: string) => {
     try {
-      await translationManager.approveTranslation(currentBatch.id, articleId);
+      await translationManager.approveTranslation(batchId, articleId);
     } catch (error) {
       console.error('Failed to approve translation:', error);
       setError('Failed to approve translation');
     }
   };
 
-  const handleReject = async (articleId: string) => {
-    if (!currentBatch) return;
+  const handleReject = async (articleId: string, batchId: string) => {
     try {
-      await translationManager.rejectTranslation(currentBatch.id, articleId);
+      await translationManager.rejectTranslation(batchId, articleId);
     } catch (error) {
       console.error('Failed to reject translation:', error);
       setError('Failed to reject translation');
@@ -288,147 +227,126 @@ function App() {
             </button>
           </div>
         ) : (
-          <div className="space-y-6">
-            <div className="bg-white shadow rounded-lg p-4">
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-lg font-medium">Articles</h2>
-                <button
-                  onClick={refreshSelectedArticles}
-                  disabled={isLoading}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 disabled:opacity-50"
-                >
-                  Refresh Articles
-                </button>
-              </div>
-              {isLoading && (
-                <div className="mb-4">
-                  <div className="w-full bg-gray-200 rounded-full h-2.5">
-                    <div
-                      className="bg-blue-600 h-2.5 rounded-full"
-                      style={{
-                        width: loadingTotal
-                          ? `${(loadingFetched / loadingTotal) * 100}%`
-                          : '100%',
-                      }}
-                    ></div>
-                  </div>
-                  <p className="text-sm text-gray-600 mt-2">
-                    {loadingTotal
-                      ? `Loading ${loadingFetched} of ${loadingTotal} articles...`
-                      : 'Loading articles...'}
-                  </p>
+          <>
+            <div className="space-y-6">
+              <div className="bg-white shadow rounded-lg p-4">
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-lg font-medium">Articles</h2>
+                  <button
+                    onClick={refreshSelectedArticles}
+                    disabled={isLoading}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 disabled:opacity-50"
+                  >
+                    Refresh Articles
+                  </button>
                 </div>
-              )}
-              <ArticleList
-                articles={articles}
-                selectedLanguage={selectedLanguage}
-                onArticleClick={(article) => {
-                  setSelectedArticle(article);
-                  navigate(`/article/${article.id}`);
-                }}
-                onTranslateSelected={async (selectedArticles) => {
-                  if (!isInitialized || !dbName) {
-                    setError('Application not properly initialized');
-                    return;
-                  }
-                  try {
-                    const batch = await translationManager.createTranslationBatch(
-                      selectedArticles,
-                      selectedLanguage,
-                      '',
-                      ''
-                    );
-                    setCurrentBatch(batch);
-                  } catch (error) {
-                    console.error('Failed to create translation batch:', error);
-                    setError('Failed to create translation batch');
-                  }
-                }}
-                onRefreshSelected={refreshSelectedArticles}
-              />
+                {isLoading && (
+                  <div className="mb-4">
+                    <div className="w-full bg-gray-200 rounded-full h-2.5">
+                      <div
+                        className="bg-blue-600 h-2.5 rounded-full"
+                        style={{
+                          width: loadingTotal
+                            ? `${(loadingFetched / loadingTotal) * 100}%`
+                            : '100%',
+                        }}
+                      ></div>
+                    </div>
+                    <p className="text-sm text-gray-600 mt-2">
+                      {loadingTotal
+                        ? `Loading ${loadingFetched} of ${loadingTotal} articles...`
+                        : 'Loading articles...'}
+                    </p>
+                  </div>
+                )}
+                <ArticleList
+                  articles={articles}
+                  selectedLanguage={selectedLanguage}
+                  onArticleClick={(article) => {
+                    navigate(`/article/${article.id}`);
+                  }}
+                  onTranslateSelected={async (selectedArticles) => {
+                    if (!isInitialized || !dbName) {
+                      setError('Application not properly initialized');
+                      return;
+                    }
+                    try {
+                      const batch = await translationManager.createTranslationBatch(
+                        selectedArticles,
+                        selectedLanguage,
+                        '',
+                        ''
+                      );
+                      navigate(`/translation/${batch.id}`);
+                    } catch (error) {
+                      console.error('Failed to create translation batch:', error);
+                      setError('Failed to create translation batch');
+                    }
+                  }}
+                  onRefreshSelected={refreshSelectedArticles}
+                />
+              </div>
             </div>
-          </div>
+
+            <Routes>
+              <Route
+                path="/api-credentials"
+                element={
+                  <APICredentialsModal
+                    isOpen={true}
+                    onSuccess={handleCredentialsSuccess}
+                  />
+                }
+              />
+              <Route
+                path="/language-instructions"
+                element={
+                  <LanguageInstructionsModal
+                    isOpen={true}
+                    languageCode={selectedLanguage}
+                    onClose={() => navigate('/')}
+                  />
+                }
+              />
+              <Route
+                path="/global-settings"
+                element={
+                  <GlobalSettingsModal
+                    isOpen={true}
+                    languageCodes={languageCodes}
+                    onLanguageCodesChange={setLanguageCodes}
+                    onClose={() => navigate('/')}
+                  />
+                }
+              />
+              <Route
+                path="/article/:articleId"
+                element={
+                  <ArticleRoute
+                    isInitialized={isInitialized}
+                    dbName={dbName}
+                    selectedLanguage={selectedLanguage}
+                    setError={setError}
+                    refreshArticle={refreshArticle}
+                  />
+                }
+              />
+              <Route
+                path="/translation/:batchId"
+                element={
+                  <TranslationRoute
+                    handleLaunchTranslation={handleLaunchTranslation}
+                    handleApprove={handleApprove}
+                    handleReject={handleReject}
+                    dbName={dbName}
+                    isInitialized={isInitialized}
+                  />
+                }
+              />
+            </Routes>
+          </>
         )}
       </main>
-
-      <Routes>
-        <Route
-          path="/api-credentials"
-          element={
-            <APICredentialsModal
-              isOpen={true}
-              onSuccess={handleCredentialsSuccess}
-            />
-          }
-        />
-        <Route
-          path="/language-instructions"
-          element={
-            <LanguageInstructionsModal
-              isOpen={true}
-              languageCode={selectedLanguage}
-              onClose={() => navigate('/')}
-            />
-          }
-        />
-        <Route
-          path="/global-settings"
-          element={
-            <GlobalSettingsModal
-              isOpen={true}
-              languageCodes={languageCodes}
-              onLanguageCodesChange={setLanguageCodes}
-              onClose={() => navigate('/')}
-            />
-          }
-        />
-        <Route
-          path="/article/:articleId"
-          element={
-            selectedArticle && (
-              <ArticleViewerModal
-                isOpen={true}
-                article={selectedArticle}
-                onClose={() => {
-                  setSelectedArticle(null);
-                  navigate('/');
-                }}
-                onTranslate={(article) => {
-                  if (!isInitialized || !dbName) {
-                    setError('Application not properly initialized');
-                    return;
-                  }
-                  try {
-                    translationManager.createTranslationBatch(
-                      [article],
-                      selectedLanguage,
-                      '',
-                      ''
-                    ).then(batch => {
-                      setCurrentBatch(batch);
-                    });
-                  } catch (error) {
-                    console.error('Failed to create translation batch:', error);
-                    setError('Failed to create translation batch');
-                  }
-                }}
-                onRefresh={() => refreshArticle(selectedArticle.id)}
-              />
-            )
-          }
-        />
-      </Routes>
-
-      {currentBatch && (
-        <TranslatePopup
-          isOpen={true}
-          batch={currentBatch}
-          onClose={() => setCurrentBatch(null)}
-          onLaunchTranslation={handleLaunchTranslation}
-          onApprove={handleApprove}
-          onReject={handleReject}
-        />
-      )}
     </div>
   )
 }
