@@ -126,7 +126,7 @@ function App() {
     }
   }
 
-  const handleLaunchTranslation = async (batchId: string, additionalContext: string) => {
+  const handleLaunchTranslation = async (batchId: string) => {
     try {
       await translationManager.launchTranslation(batchId);
     } catch (error) {
