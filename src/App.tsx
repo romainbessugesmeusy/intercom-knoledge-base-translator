@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
 import { Routes, Route, useNavigate } from 'react-router-dom'
-import APICredentialsModal from './components/APICredentialsModal'
 import LanguageInstructionsModal from './components/LanguageInstructionsModal'
 import GlobalSettingsModal from './components/GlobalSettingsModal'
 import ArticleList from './components/ArticleList'
@@ -177,22 +176,16 @@ function App() {
                 ))}
               </select>
               <button
-                onClick={() => navigate('/api-credentials')}
+                onClick={() => navigate('/global-settings')}
                 className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900"
               >
-                API Credentials
+                Settings
               </button>
               <button
                 onClick={() => navigate('/language-instructions')}
                 className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900"
               >
                 Language Instructions
-              </button>
-              <button
-                onClick={() => navigate('/global-settings')}
-                className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900"
-              >
-                Global Settings
               </button>
             </div>
           </div>
@@ -208,11 +201,12 @@ function App() {
 
         <Routes>
           <Route
-            path="/api-credentials"
+            path="/global-settings"
             element={
-              <APICredentialsModal
+              <GlobalSettingsModal
                 isOpen={true}
-                onSuccess={handleCredentialsSuccess}
+                onClose={() => navigate('/')}
+                onCredentialsSuccess={handleCredentialsSuccess}
               />
             }
           />
@@ -227,117 +221,142 @@ function App() {
             }
           />
           <Route
-            path="/global-settings"
+            path="/"
             element={
-              <GlobalSettingsModal
-                isOpen={true}
-                onClose={() => navigate('/')}
+              !isInitialized ? (
+                <div className="text-center py-12">
+                  {isLoading ? (
+                    <div className="space-y-4">
+                      <h2 className="text-xl font-semibold mb-4">Initializing Intercom Translator</h2>
+                      <div className="max-w-md mx-auto">
+                        <div className="bg-white shadow rounded-lg p-6">
+                          <div className="space-y-4">
+                            <div className="flex items-center justify-between text-sm">
+                              <span className="text-gray-700">Downloading articles...</span>
+                              <span className="text-gray-500">
+                                {loadingTotal ? `${loadingFetched} of ${loadingTotal}` : loadingFetched}
+                              </span>
+                            </div>
+                            <div className="w-full bg-gray-200 rounded-full h-2">
+                              <div
+                                className="bg-blue-600 h-2 rounded-full transition-all duration-500"
+                                style={{
+                                  width: loadingTotal
+                                    ? `${(loadingFetched / loadingTotal) * 100}%`
+                                    : '100%',
+                                }}
+                              />
+                            </div>
+                            <p className="text-sm text-gray-500 italic">
+                              This may take a few minutes depending on the size of your knowledge base
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <h2 className="text-xl font-semibold mb-4">Welcome to Intercom Translator</h2>
+                      <p className="mb-4">Please configure your API credentials to get started.</p>
+                      <button
+                        onClick={() => navigate('/global-settings')}
+                        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                      >
+                        Configure Settings
+                      </button>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <div className="space-y-6">
+                    <div className="bg-white shadow rounded-lg p-4">
+                      <div className="flex justify-between items-center mb-4">
+                        <h2 className="text-lg font-medium">Articles</h2>
+                        <button
+                          onClick={refreshSelectedArticles}
+                          disabled={isLoading}
+                          className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 disabled:opacity-50"
+                        >
+                          Refresh Articles
+                        </button>
+                      </div>
+                      {isLoading && (
+                        <div className="mb-4">
+                          <div className="w-full bg-gray-200 rounded-full h-2.5">
+                            <div
+                              className="bg-blue-600 h-2.5 rounded-full"
+                              style={{
+                                width: loadingTotal
+                                  ? `${(loadingFetched / loadingTotal) * 100}%`
+                                  : '100%',
+                              }}
+                            ></div>
+                          </div>
+                          <p className="text-sm text-gray-600 mt-2">
+                            {loadingTotal
+                              ? `Loading ${loadingFetched} of ${loadingTotal} articles...`
+                              : 'Loading articles...'}
+                          </p>
+                        </div>
+                      )}
+                      <ArticleList
+                        articles={articles}
+                        selectedLanguage={selectedLanguage}
+                        onArticleClick={(article) => {
+                          navigate(`/article/${article.id}`);
+                        }}
+                        onTranslateSelected={async (selectedArticles) => {
+                          if (!isInitialized || !dbName) {
+                            setError('Application not properly initialized');
+                            return;
+                          }
+                          try {
+                            const batch = await translationManager.createTranslationBatch(
+                              selectedArticles,
+                              selectedLanguage,
+                              '',
+                              ''
+                            );
+                            navigate(`/translation/${batch.id}`);
+                          } catch (error) {
+                            console.error('Failed to create translation batch:', error);
+                            setError('Failed to create translation batch');
+                          }
+                        }}
+                        onRefreshSelected={refreshSelectedArticles}
+                      />
+                    </div>
+                  </div>
+                </>
+              )
+            }
+          />
+          <Route
+            path="/article/:articleId"
+            element={
+              <ArticleRoute
+                isInitialized={isInitialized}
+                dbName={dbName}
+                selectedLanguage={selectedLanguage}
+                setError={setError}
+                refreshArticle={refreshArticle}
+              />
+            }
+          />
+          <Route
+            path="/translation/:batchId"
+            element={
+              <TranslationRoute
+                handleLaunchTranslation={handleLaunchTranslation}
+                handleApprove={handleApprove}
+                handleReject={handleReject}
+                dbName={dbName}
+                isInitialized={isInitialized}
               />
             }
           />
         </Routes>
-
-        {!isInitialized ? (
-          <div className="text-center py-12">
-            <h2 className="text-xl font-semibold mb-4">Welcome to Intercom Translator</h2>
-            <p className="mb-4">Please configure your API credentials to get started.</p>
-            <button
-              onClick={() => navigate('/api-credentials')}
-              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-            >
-              Configure API Credentials
-            </button>
-          </div>
-        ) : (
-          <>
-            <div className="space-y-6">
-              <div className="bg-white shadow rounded-lg p-4">
-                <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-lg font-medium">Articles</h2>
-                  <button
-                    onClick={refreshSelectedArticles}
-                    disabled={isLoading}
-                    className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 disabled:opacity-50"
-                  >
-                    Refresh Articles
-                  </button>
-                </div>
-                {isLoading && (
-                  <div className="mb-4">
-                    <div className="w-full bg-gray-200 rounded-full h-2.5">
-                      <div
-                        className="bg-blue-600 h-2.5 rounded-full"
-                        style={{
-                          width: loadingTotal
-                            ? `${(loadingFetched / loadingTotal) * 100}%`
-                            : '100%',
-                        }}
-                      ></div>
-                    </div>
-                    <p className="text-sm text-gray-600 mt-2">
-                      {loadingTotal
-                        ? `Loading ${loadingFetched} of ${loadingTotal} articles...`
-                        : 'Loading articles...'}
-                    </p>
-                  </div>
-                )}
-                <ArticleList
-                  articles={articles}
-                  selectedLanguage={selectedLanguage}
-                  onArticleClick={(article) => {
-                    navigate(`/article/${article.id}`);
-                  }}
-                  onTranslateSelected={async (selectedArticles) => {
-                    if (!isInitialized || !dbName) {
-                      setError('Application not properly initialized');
-                      return;
-                    }
-                    try {
-                      const batch = await translationManager.createTranslationBatch(
-                        selectedArticles,
-                        selectedLanguage,
-                        '',
-                        ''
-                      );
-                      navigate(`/translation/${batch.id}`);
-                    } catch (error) {
-                      console.error('Failed to create translation batch:', error);
-                      setError('Failed to create translation batch');
-                    }
-                  }}
-                  onRefreshSelected={refreshSelectedArticles}
-                />
-              </div>
-            </div>
-
-            <Routes>
-              <Route
-                path="/article/:articleId"
-                element={
-                  <ArticleRoute
-                    isInitialized={isInitialized}
-                    dbName={dbName}
-                    selectedLanguage={selectedLanguage}
-                    setError={setError}
-                    refreshArticle={refreshArticle}
-                  />
-                }
-              />
-              <Route
-                path="/translation/:batchId"
-                element={
-                  <TranslationRoute
-                    handleLaunchTranslation={handleLaunchTranslation}
-                    handleApprove={handleApprove}
-                    handleReject={handleReject}
-                    dbName={dbName}
-                    isInitialized={isInitialized}
-                  />
-                }
-              />
-            </Routes>
-          </>
-        )}
       </main>
     </div>
   )
